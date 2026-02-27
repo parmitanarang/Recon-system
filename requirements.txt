@@ -1,0 +1,9 @@
+# This project is Node.js (React + Vite frontend, Express backend), not Python.
+# Dependencies:
+#   - Root (frontend):  npm install          → see package.json
+#   - Backend:          cd server && npm install  → see server/package.json
+#
+# Render deployment (see render.yaml):
+#   - One web service (Node) + Postgres. Build: npm install && npm run build && cd server && npm install
+#   - Start: cd server && npm start
+#   - Env: DATABASE_URL (from linked Postgres). No VITE_API_URL needed (same-origin API).

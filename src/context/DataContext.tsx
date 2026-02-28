@@ -46,7 +46,7 @@ export interface DataContextValue {
   runJobWithFiles?(jobSpecId: string, fileA: File, fileB: File): Promise<string | null>;
 }
 
-const DataContext = createContext<DataContextValue | undefined>(undefined);
+export const DataContext = createContext<DataContextValue | undefined>(undefined);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<Project[]>(initialProjects);

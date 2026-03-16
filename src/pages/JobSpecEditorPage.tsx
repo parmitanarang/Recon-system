@@ -18,6 +18,44 @@ type LocalRule = {
 
 const MAX_RULES = 5;
 
+function normalizeColumnName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function suggestRulesFromColumns(
+  sourceAColumns: string[],
+  sourceBColumns: string[]
+): LocalRule[] {
+  if (!sourceAColumns.length || !sourceBColumns.length) return [];
+
+  const byNormalizedB = new Map<string, string>();
+  sourceBColumns.forEach((col) => {
+    const key = normalizeColumnName(col);
+    if (!byNormalizedB.has(key)) {
+      byNormalizedB.set(key, col);
+    }
+  });
+
+  const suggestions: LocalRule[] = [];
+  for (const colA of sourceAColumns) {
+    const key = normalizeColumnName(colA);
+    const matchB = byNormalizedB.get(key);
+    if (matchB) {
+      const id = `rule-suggested-${suggestions.length + 1}`;
+      suggestions.push({
+        id,
+        leftSource: "sourceA",
+        leftColumn: colA,
+        rightSource: "sourceB",
+        rightColumn: matchB
+      });
+      if (suggestions.length >= MAX_RULES) break;
+    }
+  }
+
+  return suggestions;
+}
+
 const createEmptyRule = (id: string): LocalRule => ({
   id,
   leftSource: "sourceA",
@@ -104,6 +142,22 @@ export function JobSpecEditorPage() {
       } else {
         setSourceB(nextState);
       }
+
+      // If both sources have columns and no rules have been defined yet,
+      // suggest an initial set of rules based on matching column names.
+      setRules((prev) => {
+        const hasExistingRules = prev.length > 0;
+        const nextSourceA = target === "sourceA" ? nextState : sourceA;
+        const nextSourceB = target === "sourceB" ? nextState : sourceB;
+        if (
+          hasExistingRules ||
+          nextSourceA.columns.length === 0 ||
+          nextSourceB.columns.length === 0
+        ) {
+          return prev;
+        }
+        return suggestRulesFromColumns(nextSourceA.columns, nextSourceB.columns);
+      });
     };
 
   const handleAddRule = () => {

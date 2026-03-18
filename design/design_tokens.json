@@ -1,0 +1,79 @@
+{
+  "color": {
+    "primary": {
+      "DEFAULT": "#2563EB",
+      "dark": "#1E40AF",
+      "light": "#DBEAFE"
+    },
+    "background": {
+      "page": "#F8FAFC",
+      "surface": "#FFFFFF",
+      "subtle": "#F1F5F9"
+    },
+    "text": {
+      "primary": "#111827",
+      "secondary": "#6B7280",
+      "disabled": "#9CA3AF",
+      "inverse": "#FFFFFF"
+    },
+    "border": {
+      "DEFAULT": "#E5E7EB",
+      "strong": "#CBD5F5"
+    },
+    "status": {
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "error": "#EF4444",
+      "info": "#3B82F6"
+    }
+  },
+
+  "typography": {
+    "fontFamily": {
+      "primary": "Inter, system-ui, -apple-system, sans-serif"
+    },
+    "fontSize": {
+      "caption": "12px",
+      "body": "14px",
+      "cardTitle": "16px",
+      "sectionTitle": "18px",
+      "pageTitle": "24px"
+    },
+    "fontWeight": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600
+    }
+  },
+
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "16px",
+    "lg": "24px",
+    "xl": "32px"
+  },
+
+  "radius": {
+    "sm": "6px",
+    "md": "10px",
+    "lg": "14px"
+  },
+
+  "shadow": {
+    "card": "0px 2px 6px rgba(0,0,0,0.06)",
+    "modal": "0px 10px 30px rgba(0,0,0,0.12)"
+  },
+
+  "layout": {
+    "sidebarWidth": "240px",
+    "contentMaxWidth": "1600px",
+    "gridColumns": 12
+  },
+
+  "transition": {
+    "fast": "120ms ease",
+    "normal": "200ms ease",
+    "slow": "300ms ease"
+  }
+}

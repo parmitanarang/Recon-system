@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useData } from "../context/DataContext";
 import type { AggregatedResult, DataRow, JobSpec } from "../data/mock";
+import { exportRowsAsCsv } from "../utils/exportCsv";
 
 type DataViewTab = "unmatched" | "autoMatched" | "manualMatched";
+type SourceId = "sourceA" | "sourceB";
+type SelectedUnmatched = { runId: string; source: SourceId; rowId: string };
 
 interface DataTabViewProps {
   jobSpecId: string;
@@ -10,7 +14,7 @@ interface DataTabViewProps {
   runIds: string[];
 }
 
-type SelectedUnmatched = { runId: string; source: "sourceA" | "sourceB"; rowId: string };
+type ColumnFilterMap = Record<string, string>;
 
 const emptyAggregated: AggregatedResult = {
   unmatchedA: [],
@@ -22,15 +26,20 @@ const emptyAggregated: AggregatedResult = {
 };
 
 export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
-  const {
-    ensureRunResult,
-    getAggregatedResult,
-    addManualMatchForJobSpec,
-    archiveUnmatchedRecord
-  } = useData();
+  const { ensureRunResult, getAggregatedResult, addManualMatchForJobSpec, archiveUnmatchedRecord } =
+    useData();
   const [viewTab, setViewTab] = useState<DataViewTab>("unmatched");
   const [selectedRows, setSelectedRows] = useState<SelectedUnmatched[]>([]);
   const [result, setResult] = useState<AggregatedResult>(emptyAggregated);
+
+  const colsA = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceA")?.columns ?? [];
+  const colsB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB")?.columns ?? [];
+
+  const [sourceAFilters, setSourceAFilters] = useState<ColumnFilterMap>({});
+  const [sourceBFilters, setSourceBFilters] = useState<ColumnFilterMap>({});
+
+  const [autoMatchedFilters, setAutoMatchedFilters] = useState<ColumnFilterMap>({});
+  const [manualMatchedFilters, setManualMatchedFilters] = useState<ColumnFilterMap>({});
 
   useEffect(() => {
     runIds.forEach((runId) => {
@@ -39,18 +48,58 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
   }, [jobSpecId, jobSpec, runIds, ensureRunResult]);
 
   useEffect(() => {
-    Promise.resolve(getAggregatedResult(jobSpecId)).then(setResult).catch(() => setResult(emptyAggregated));
+    Promise.resolve(getAggregatedResult(jobSpecId))
+      .then(setResult)
+      .catch(() => setResult(emptyAggregated));
   }, [jobSpecId, getAggregatedResult]);
 
-  // Refetch aggregated when selection changes (manual match may have been called)
   const refreshAggregated = () => {
-    Promise.resolve(getAggregatedResult(jobSpecId)).then(setResult).catch(() => {});
+    Promise.resolve(getAggregatedResult(jobSpecId))
+      .then(setResult)
+      .catch(() => {});
   };
-  const colsA = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceA")?.columns ?? [];
-  const colsB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB")?.columns ?? [];
 
   const canArchive = selectedRows.length === 1;
   const canManualMatch = selectedRows.length === 2;
+
+  const normalizedContains = (value: unknown, filterValue: string) =>
+    String(value ?? "").toLowerCase().includes(filterValue.trim().toLowerCase());
+
+  const rowPassesFilters = (row: DataRow, filters: ColumnFilterMap) =>
+    Object.entries(filters).every(([col, val]) => !val.trim() || normalizedContains(row[col], val));
+
+  const pairPassesFilters = (pair: { left: DataRow; right: DataRow }, filters: ColumnFilterMap) =>
+    Object.entries(filters).every(([key, val]) => {
+      if (!val.trim()) return true;
+      const [source, col] = key.split(":", 2);
+      const cell = source === "sourceA" ? pair.left[col] : pair.right[col];
+      return normalizedContains(cell, val);
+    });
+
+  const filteredUnmatchedA = useMemo(
+    () => result.unmatchedA.filter(({ row }) => rowPassesFilters(row, sourceAFilters)),
+    [result.unmatchedA, sourceAFilters]
+  );
+  const filteredUnmatchedB = useMemo(
+    () => result.unmatchedB.filter(({ row }) => rowPassesFilters(row, sourceBFilters)),
+    [result.unmatchedB, sourceBFilters]
+  );
+  const filteredAutoMatched = useMemo(
+    () => result.autoMatched.filter((pair) => pairPassesFilters(pair, autoMatchedFilters)),
+    [result.autoMatched, autoMatchedFilters]
+  );
+  const filteredManualMatched = useMemo(
+    () => result.manualMatched.filter((pair) => pairPassesFilters(pair, manualMatchedFilters)),
+    [result.manualMatched, manualMatchedFilters]
+  );
+
+  const pairFilterOptions = useMemo(
+    () => [
+      ...colsA.map((c) => ({ key: `sourceA:${c}`, label: `Data Source 1 · ${c}` })),
+      ...colsB.map((c) => ({ key: `sourceB:${c}`, label: `Data Source 2 · ${c}` }))
+    ],
+    [colsA, colsB]
+  );
 
   const handleManualMatch = async () => {
     if (!canManualMatch) return;
@@ -69,20 +118,17 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
     refreshAggregated();
   };
 
-  const toggleSelect = (runId: string, source: "sourceA" | "sourceB", rowId: string) => {
+  const toggleSelect = (runId: string, source: SourceId, rowId: string) => {
     setSelectedRows((prev) => {
       const exists = prev.some((s) => s.runId === runId && s.source === source && s.rowId === rowId);
-      if (exists) return prev.filter((s) => !(s.runId === runId && s.source === source && s.rowId === rowId));
+      if (exists)
+        return prev.filter((s) => !(s.runId === runId && s.source === source && s.rowId === rowId));
       if (prev.length >= 2) return prev;
       return [...prev, { runId, source, rowId }];
     });
   };
 
-  const handleArchive = async (
-    runId: string,
-    source: "sourceA" | "sourceB",
-    rowId: string
-  ) => {
+  const handleArchive = async (runId: string, source: SourceId, rowId: string) => {
     await Promise.resolve(archiveUnmatchedRecord(runId, source, rowId));
     setSelectedRows((prev) =>
       prev.filter((s) => !(s.runId === runId && s.source === source && s.rowId === rowId))
@@ -90,65 +136,133 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
     refreshAggregated();
   };
 
-  const isSelected = (runId: string, source: "sourceA" | "sourceB", rowId: string) =>
+  const isSelected = (runId: string, source: SourceId, rowId: string) =>
     selectedRows.some((s) => s.runId === runId && s.source === source && s.rowId === rowId);
+
+  const exportUnmatched = () => {
+    const rows = [
+      ...filteredUnmatchedA.map(({ runId, row }) => ({
+        source: "Data Source 1",
+        runId,
+        ...row
+      })),
+      ...filteredUnmatchedB.map(({ runId, row }) => ({
+        source: "Data Source 2",
+        runId,
+        ...row
+      }))
+    ];
+    exportRowsAsCsv("unmatched-records.csv", rows);
+  };
+
+  const exportPairs = (filename: string, pairs: { left: DataRow; right: DataRow }[]) => {
+    const rows = pairs.map((pair) => ({
+      ...Object.fromEntries(colsA.map((c) => [`sourceA_${c}`, pair.left[c] ?? ""])),
+      ...Object.fromEntries(colsB.map((c) => [`sourceB_${c}`, pair.right[c] ?? ""]))
+    }));
+    exportRowsAsCsv(filename, rows);
+  };
+
+  const unmatchedFilterOptionsA = colsA.filter((c) => !(c in sourceAFilters));
+  const unmatchedFilterOptionsB = colsB.filter((c) => !(c in sourceBFilters));
+  const autoFilterOptions = pairFilterOptions.filter((opt) => !(opt.key in autoMatchedFilters));
+  const manualFilterOptions = pairFilterOptions.filter((opt) => !(opt.key in manualMatchedFilters));
 
   return (
     <div className="data-tab-view">
-      <div className="view-data-tabs view-data-tabs-inline">
-        <button
-          type="button"
-          className={`view-data-tab ${viewTab === "unmatched" ? "view-data-tab-active" : ""}`}
-          onClick={() => setViewTab("unmatched")}
-        >
-          Unmatched {result.unmatchedA.length + result.unmatchedB.length > 0 && `(${result.unmatchedA.length + result.unmatchedB.length})`}
-        </button>
-        <button
-          type="button"
-          className={`view-data-tab ${viewTab === "autoMatched" ? "view-data-tab-active" : ""}`}
-          onClick={() => setViewTab("autoMatched")}
-        >
-          Auto Matched {result.autoMatched.length > 0 && `(${result.autoMatched.length})`}
-        </button>
-        <button
-          type="button"
-          className={`view-data-tab ${viewTab === "manualMatched" ? "view-data-tab-active" : ""}`}
-          onClick={() => setViewTab("manualMatched")}
-        >
-          Manual Matched {result.manualMatched.length > 0 && `(${result.manualMatched.length})`}
-        </button>
+      <div className="view-data-tabs view-data-tabs-inline view-data-tabs-with-actions">
+        <div className="view-data-tabs-left">
+          <button
+            type="button"
+            className={`view-data-tab ${viewTab === "unmatched" ? "view-data-tab-active" : ""}`}
+            onClick={() => setViewTab("unmatched")}
+          >
+            Unmatched{" "}
+            {result.unmatchedA.length + result.unmatchedB.length > 0 &&
+              `(${result.unmatchedA.length + result.unmatchedB.length})`}
+          </button>
+          <button
+            type="button"
+            className={`view-data-tab ${viewTab === "autoMatched" ? "view-data-tab-active" : ""}`}
+            onClick={() => setViewTab("autoMatched")}
+          >
+            Auto Matched {result.autoMatched.length > 0 && `(${result.autoMatched.length})`}
+          </button>
+          <button
+            type="button"
+            className={`view-data-tab ${viewTab === "manualMatched" ? "view-data-tab-active" : ""}`}
+            onClick={() => setViewTab("manualMatched")}
+          >
+            Manual Matched {result.manualMatched.length > 0 && `(${result.manualMatched.length})`}
+          </button>
+        </div>
+        <div className="view-data-tabs-actions">
+          {viewTab === "unmatched" && canArchive && (
+            <button
+              type="button"
+              className="btn-secondary btn-xs"
+              onClick={() => {
+                const [single] = selectedRows;
+                void handleArchive(single.runId, single.source, single.rowId);
+              }}
+            >
+              Archive
+            </button>
+          )}
+          {viewTab === "unmatched" && canManualMatch && (
+            <button type="button" className="btn-primary btn-xs" onClick={handleManualMatch}>
+              Manual match
+            </button>
+          )}
+          {viewTab === "unmatched" && (
+            <button type="button" className="btn-secondary btn-xs" onClick={exportUnmatched}>
+              Export Unmatched
+            </button>
+          )}
+          {viewTab === "autoMatched" && (
+            <button
+              type="button"
+              className="btn-secondary btn-xs"
+              onClick={() => exportPairs("matched-records.csv", filteredAutoMatched)}
+            >
+              Export Matched
+            </button>
+          )}
+          {viewTab === "manualMatched" && (
+            <button
+              type="button"
+              className="btn-secondary btn-xs"
+              onClick={() => exportPairs("manual-matched-records.csv", filteredManualMatched)}
+            >
+              Export Matched
+            </button>
+          )}
+        </div>
       </div>
 
       {viewTab === "unmatched" && (
         <div className="view-data-unmatched">
-          {canArchive && (
-            <div className="view-data-manual-match-bar">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  const [single] = selectedRows;
-                  void handleArchive(single.runId, single.source, single.rowId);
-                }}
-              >
-                Archive
-              </button>
-            </div>
-          )}
-          {canManualMatch && (
-            <div className="view-data-manual-match-bar">
-              <button type="button" className="btn-primary" onClick={handleManualMatch}>
-                Manual match
-              </button>
-            </div>
-          )}
           <div className="view-data-two-panels">
             <div className="view-data-panel">
               <h3 className="view-data-panel-title">Data Source 1</h3>
               <div className="view-data-panel-toolbar">
-                <button type="button" className="pill pill-outline btn-xs">
-                  Add Filter ▾
-                </button>
+                <select
+                  className="pill pill-outline btn-xs filter-select-pill"
+                  value=""
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (!selected) return;
+                    setSourceAFilters((prev) => ({ ...prev, [selected]: "" }));
+                  }}
+                >
+                  <option value="">Add Filter</option>
+                  {unmatchedFilterOptionsA.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <FilterPills filters={sourceAFilters} setFilters={setSourceAFilters} inline />
               </div>
               <div className="table-container">
                 <table className="data-table">
@@ -162,7 +276,7 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.unmatchedA.map(({ runId, row }, index) => (
+                    {filteredUnmatchedA.map(({ runId, row }, index) => (
                       <tr
                         key={`${runId}-${row._id}`}
                         className={isSelected(runId, "sourceA", row._id) ? "row-selected" : ""}
@@ -185,16 +299,31 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                   </tbody>
                 </table>
               </div>
-              {result.unmatchedA.length === 0 && (
+              {filteredUnmatchedA.length === 0 && (
                 <p className="view-data-empty">No unmatched records from Data Source 1.</p>
               )}
             </div>
+
             <div className="view-data-panel">
               <h3 className="view-data-panel-title">Data Source 2</h3>
               <div className="view-data-panel-toolbar">
-                <button type="button" className="pill pill-outline btn-xs">
-                  Add Filter ▾
-                </button>
+                <select
+                  className="pill pill-outline btn-xs filter-select-pill"
+                  value=""
+                  onChange={(e) => {
+                    const selected = e.target.value;
+                    if (!selected) return;
+                    setSourceBFilters((prev) => ({ ...prev, [selected]: "" }));
+                  }}
+                >
+                  <option value="">Add Filter</option>
+                  {unmatchedFilterOptionsB.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <FilterPills filters={sourceBFilters} setFilters={setSourceBFilters} inline />
               </div>
               <div className="table-container">
                 <table className="data-table">
@@ -208,7 +337,7 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.unmatchedB.map(({ runId, row }, index) => (
+                    {filteredUnmatchedB.map(({ runId, row }, index) => (
                       <tr
                         key={`${runId}-${row._id}`}
                         className={isSelected(runId, "sourceB", row._id) ? "row-selected" : ""}
@@ -231,7 +360,7 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                   </tbody>
                 </table>
               </div>
-              {result.unmatchedB.length === 0 && (
+              {filteredUnmatchedB.length === 0 && (
                 <p className="view-data-empty">No unmatched records from Data Source 2.</p>
               )}
             </div>
@@ -245,21 +374,37 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
             <button type="button" className="pill">
               Date Range
             </button>
-            <button type="button" className="pill pill-outline">
-              + Filter
-            </button>
-            <button type="button" className="btn-secondary btn-xs">
-              Export Matched
-            </button>
+            <select
+              className="pill pill-outline filter-select-pill"
+              value=""
+              onChange={(e) => {
+                const selected = e.target.value;
+                if (!selected) return;
+                setAutoMatchedFilters((prev) => ({ ...prev, [selected]: "" }));
+              }}
+            >
+              <option value="">+ Filter</option>
+              {autoFilterOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <FilterPills
+              filters={autoMatchedFilters}
+              setFilters={setAutoMatchedFilters}
+              labelMap={Object.fromEntries(pairFilterOptions.map((o) => [o.key, o.label]))}
+              inline
+            />
           </div>
           <MatchedTable
-            pairs={result.autoMatched}
+            pairs={filteredAutoMatched}
             colsA={colsA}
             colsB={colsB}
             source1Label="Data Source 1"
             source2Label="Data Source 2"
           />
-          {result.autoMatched.length === 0 && (
+          {filteredAutoMatched.length === 0 && (
             <p className="view-data-empty">No auto-matched records.</p>
           )}
         </div>
@@ -271,25 +416,89 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
             <button type="button" className="pill">
               Date Range
             </button>
-            <button type="button" className="pill pill-outline">
-              + Filter
-            </button>
-            <button type="button" className="btn-secondary btn-xs">
-              Export Matched
-            </button>
+            <select
+              className="pill pill-outline filter-select-pill"
+              value=""
+              onChange={(e) => {
+                const selected = e.target.value;
+                if (!selected) return;
+                setManualMatchedFilters((prev) => ({ ...prev, [selected]: "" }));
+              }}
+            >
+              <option value="">+ Filter</option>
+              {manualFilterOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <FilterPills
+              filters={manualMatchedFilters}
+              setFilters={setManualMatchedFilters}
+              labelMap={Object.fromEntries(pairFilterOptions.map((o) => [o.key, o.label]))}
+              inline
+            />
           </div>
           <MatchedTable
-            pairs={result.manualMatched}
+            pairs={filteredManualMatched}
             colsA={colsA}
             colsB={colsB}
             source1Label="Data Source 1"
             source2Label="Data Source 2"
           />
-          {result.manualMatched.length === 0 && (
+          {filteredManualMatched.length === 0 && (
             <p className="view-data-empty">No manually matched records yet.</p>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function FilterPills({
+  filters,
+  setFilters,
+  labelMap,
+  inline
+}: {
+  filters: ColumnFilterMap;
+  setFilters: Dispatch<SetStateAction<ColumnFilterMap>>;
+  labelMap?: Record<string, string>;
+  inline?: boolean;
+}) {
+  const entries = Object.entries(filters);
+  if (!entries.length) return null;
+  return (
+    <div className={`filter-pill-list ${inline ? "filter-pill-list-inline" : ""}`}>
+      {entries.map(([key, value]) => (
+        <div key={key} className="filter-pill">
+          <span className="filter-pill-label">{labelMap?.[key] ?? key}</span>
+          <input
+            className="text-input filter-pill-input"
+            placeholder="contains..."
+            value={value}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                [key]: e.target.value
+              }))
+            }
+          />
+          <button
+            type="button"
+            className="link-button-small link-button-danger"
+            onClick={() =>
+              setFilters((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              })
+            }
+          >
+            ×
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

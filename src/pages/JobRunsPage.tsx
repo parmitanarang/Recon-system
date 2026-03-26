@@ -5,6 +5,7 @@ import { ViewDataModal } from "../components/ViewDataModal";
 import { DataTabView } from "../components/DataTabView";
 import { RunJobModal } from "../components/RunJobModal";
 import type { ArchivedRecord, DataSourceId } from "../data/mock";
+import { exportRowsAsCsv } from "../utils/exportCsv";
 
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {
@@ -60,6 +61,16 @@ export function JobRunsPage() {
   const sourceB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB");
   const rules = jobSpec.rules ?? [];
   const [archivedRecords, setArchivedRecords] = useState<ArchivedRecord[]>([]);
+
+  const exportArchived = () => {
+    const rows = archivedRecords.map((item) => ({
+      runId: item.runId,
+      runDate: item.runAt ? formatDateTime(item.runAt) : "",
+      source: item.sourceFileName || sourceLabel(item.source),
+      ...item.row
+    }));
+    exportRowsAsCsv("archived-records.csv", rows);
+  };
 
   useEffect(() => {
     Promise.resolve(getArchivedRecords(jobSpec.id))
@@ -264,32 +275,41 @@ export function JobRunsPage() {
       )}
 
       {activeTab === "archived" && (
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>Run Date</th>
-                <th>Source</th>
-                <th>Record Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {archivedRecords.map((item) => (
-                <tr key={`${item.runId}-${item.source}-${item.row._id}`}>
-                  <td className="mono">{item.runId}</td>
-                  <td>{item.runAt ? formatDateTime(item.runAt) : "—"}</td>
-                  <td>{item.sourceFileName || sourceLabel(item.source)}</td>
-                  <td className="mono">{JSON.stringify(item.row)}</td>
+        <div>
+          <div className="table-toolbar">
+            <div className="pill-group">
+              <button type="button" className="btn-secondary btn-xs" onClick={exportArchived}>
+                Export Archived
+              </button>
+            </div>
+          </div>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Run Date</th>
+                  <th>Source</th>
+                  <th>Record Details</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {archivedRecords.length === 0 && (
-            <p className="view-data-empty" style={{ padding: 12 }}>
-              No archived records yet.
-            </p>
-          )}
+              </thead>
+              <tbody>
+                {archivedRecords.map((item) => (
+                  <tr key={`${item.runId}-${item.source}-${item.row._id}`}>
+                    <td className="mono">{item.runId}</td>
+                    <td>{item.runAt ? formatDateTime(item.runAt) : "—"}</td>
+                    <td>{item.sourceFileName || sourceLabel(item.source)}</td>
+                    <td className="mono">{JSON.stringify(item.row)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {archivedRecords.length === 0 && (
+              <p className="view-data-empty" style={{ padding: 12 }}>
+                No archived records yet.
+              </p>
+            )}
+          </div>
         </div>
       )}
 

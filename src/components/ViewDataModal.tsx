@@ -12,10 +12,11 @@ interface ViewDataModalProps {
 }
 
 export function ViewDataModal({ runId, jobSpec, runLabel, onClose }: ViewDataModalProps) {
-  const { ensureRunResult, runResults, addManualMatch } = useData();
+  const { ensureRunResult, runResults, addManualMatch, archiveUnmatchedRecord } = useData();
   const [viewTab, setViewTab] = useState<ViewDataTab>("unmatched");
-  const [selectedLeftId, setSelectedLeftId] = useState<string | null>(null);
-  const [selectedRightId, setSelectedRightId] = useState<string | null>(null);
+  const [selectedRows, setSelectedRows] = useState<
+    { source: "sourceA" | "sourceB"; rowId: string }[]
+  >([]);
 
   useEffect(() => {
     Promise.resolve(ensureRunResult(runId, jobSpec)).catch(() => {});
@@ -25,13 +26,33 @@ export function ViewDataModal({ runId, jobSpec, runLabel, onClose }: ViewDataMod
   const colsA = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceA")?.columns ?? [];
   const colsB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB")?.columns ?? [];
 
-  const canManualMatch = selectedLeftId && selectedRightId;
+  const canArchive = selectedRows.length === 1;
+  const canManualMatch = selectedRows.length === 2;
+
+  const toggleSelect = (source: "sourceA" | "sourceB", rowId: string) => {
+    setSelectedRows((prev) => {
+      const exists = prev.some((s) => s.source === source && s.rowId === rowId);
+      if (exists) return prev.filter((s) => !(s.source === source && s.rowId === rowId));
+      if (prev.length >= 2) return prev;
+      return [...prev, { source, rowId }];
+    });
+  };
+
+  const isSelected = (source: "sourceA" | "sourceB", rowId: string) =>
+    selectedRows.some((s) => s.source === source && s.rowId === rowId);
 
   const handleManualMatch = async () => {
     if (!canManualMatch) return;
-    await Promise.resolve(addManualMatch(runId, selectedLeftId, selectedRightId));
-    setSelectedLeftId(null);
-    setSelectedRightId(null);
+    const [first, second] = selectedRows;
+    await Promise.resolve(
+      addManualMatch(runId, first.source, first.rowId, second.source, second.rowId)
+    );
+    setSelectedRows([]);
+  };
+
+  const handleArchive = async (source: "sourceA" | "sourceB", rowId: string) => {
+    await Promise.resolve(archiveUnmatchedRecord(runId, source, rowId));
+    setSelectedRows((prev) => prev.filter((s) => !(s.source === source && s.rowId === rowId)));
   };
 
   return (
@@ -73,6 +94,20 @@ export function ViewDataModal({ runId, jobSpec, runLabel, onClose }: ViewDataMod
 
         {viewTab === "unmatched" && (
           <div className="view-data-unmatched">
+            {canArchive && (
+              <div className="view-data-manual-match-bar">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    const [single] = selectedRows;
+                    void handleArchive(single.source, single.rowId);
+                  }}
+                >
+                  Archive
+                </button>
+              </div>
+            )}
             {canManualMatch && (
               <div className="view-data-manual-match-bar">
                 <button type="button" className="btn-primary" onClick={handleManualMatch}>
@@ -102,18 +137,14 @@ export function ViewDataModal({ runId, jobSpec, runLabel, onClose }: ViewDataMod
                       {result.unmatchedA.map((row) => (
                         <tr
                           key={row._id}
-                          className={selectedLeftId === row._id ? "row-selected" : ""}
-                          onClick={() =>
-                            setSelectedLeftId((id) => (id === row._id ? null : row._id))
-                          }
+                          className={isSelected("sourceA", row._id) ? "row-selected" : ""}
+                          onClick={() => toggleSelect("sourceA", row._id)}
                         >
                           <td>
                             <input
                               type="checkbox"
-                              checked={selectedLeftId === row._id}
-                              onChange={() =>
-                                setSelectedLeftId((id) => (id === row._id ? null : row._id))
-                              }
+                              checked={isSelected("sourceA", row._id)}
+                              onChange={() => toggleSelect("sourceA", row._id)}
                               onClick={(e) => e.stopPropagation()}
                             />
                           </td>
@@ -150,18 +181,14 @@ export function ViewDataModal({ runId, jobSpec, runLabel, onClose }: ViewDataMod
                       {result.unmatchedB.map((row) => (
                         <tr
                           key={row._id}
-                          className={selectedRightId === row._id ? "row-selected" : ""}
-                          onClick={() =>
-                            setSelectedRightId((id) => (id === row._id ? null : row._id))
-                          }
+                          className={isSelected("sourceB", row._id) ? "row-selected" : ""}
+                          onClick={() => toggleSelect("sourceB", row._id)}
                         >
                           <td>
                             <input
                               type="checkbox"
-                              checked={selectedRightId === row._id}
-                              onChange={() =>
-                                setSelectedRightId((id) => (id === row._id ? null : row._id))
-                              }
+                              checked={isSelected("sourceB", row._id)}
+                              onChange={() => toggleSelect("sourceB", row._id)}
                               onClick={(e) => e.stopPropagation()}
                             />
                           </td>

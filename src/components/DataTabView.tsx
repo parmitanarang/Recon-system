@@ -10,11 +10,13 @@ interface DataTabViewProps {
   runIds: string[];
 }
 
-type SelectedUnmatched = { runId: string; rowId: string } | null;
+type SelectedUnmatched = { runId: string; source: "sourceA" | "sourceB"; rowId: string };
 
 const emptyAggregated: AggregatedResult = {
   unmatchedA: [],
   unmatchedB: [],
+  archivedA: [],
+  archivedB: [],
   autoMatched: [],
   manualMatched: []
 };
@@ -23,11 +25,11 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
   const {
     ensureRunResult,
     getAggregatedResult,
-    addManualMatchForJobSpec
+    addManualMatchForJobSpec,
+    archiveUnmatchedRecord
   } = useData();
   const [viewTab, setViewTab] = useState<DataViewTab>("unmatched");
-  const [selectedLeft, setSelectedLeft] = useState<SelectedUnmatched>(null);
-  const [selectedRight, setSelectedRight] = useState<SelectedUnmatched>(null);
+  const [selectedRows, setSelectedRows] = useState<SelectedUnmatched[]>([]);
   const [result, setResult] = useState<AggregatedResult>(emptyAggregated);
 
   useEffect(() => {
@@ -47,34 +49,49 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
   const colsA = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceA")?.columns ?? [];
   const colsB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB")?.columns ?? [];
 
-  const canManualMatch =
-    selectedLeft &&
-    selectedRight &&
-    selectedLeft.runId &&
-    selectedLeft.rowId &&
-    selectedRight.runId &&
-    selectedRight.rowId;
+  const canArchive = selectedRows.length === 1;
+  const canManualMatch = selectedRows.length === 2;
 
   const handleManualMatch = async () => {
     if (!canManualMatch) return;
     await Promise.resolve(
       addManualMatchForJobSpec(
         jobSpecId,
-        selectedLeft.runId,
-        selectedLeft.rowId,
-        selectedRight.runId,
-        selectedRight.rowId
+        selectedRows[0].runId,
+        selectedRows[0].source,
+        selectedRows[0].rowId,
+        selectedRows[1].runId,
+        selectedRows[1].source,
+        selectedRows[1].rowId
       )
     );
-    setSelectedLeft(null);
-    setSelectedRight(null);
+    setSelectedRows([]);
     refreshAggregated();
   };
 
-  const isLeftSelected = (runId: string, rowId: string) =>
-    selectedLeft?.runId === runId && selectedLeft?.rowId === rowId;
-  const isRightSelected = (runId: string, rowId: string) =>
-    selectedRight?.runId === runId && selectedRight?.rowId === rowId;
+  const toggleSelect = (runId: string, source: "sourceA" | "sourceB", rowId: string) => {
+    setSelectedRows((prev) => {
+      const exists = prev.some((s) => s.runId === runId && s.source === source && s.rowId === rowId);
+      if (exists) return prev.filter((s) => !(s.runId === runId && s.source === source && s.rowId === rowId));
+      if (prev.length >= 2) return prev;
+      return [...prev, { runId, source, rowId }];
+    });
+  };
+
+  const handleArchive = async (
+    runId: string,
+    source: "sourceA" | "sourceB",
+    rowId: string
+  ) => {
+    await Promise.resolve(archiveUnmatchedRecord(runId, source, rowId));
+    setSelectedRows((prev) =>
+      prev.filter((s) => !(s.runId === runId && s.source === source && s.rowId === rowId))
+    );
+    refreshAggregated();
+  };
+
+  const isSelected = (runId: string, source: "sourceA" | "sourceB", rowId: string) =>
+    selectedRows.some((s) => s.runId === runId && s.source === source && s.rowId === rowId);
 
   return (
     <div className="data-tab-view">
@@ -104,6 +121,20 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
 
       {viewTab === "unmatched" && (
         <div className="view-data-unmatched">
+          {canArchive && (
+            <div className="view-data-manual-match-bar">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  const [single] = selectedRows;
+                  void handleArchive(single.runId, single.source, single.rowId);
+                }}
+              >
+                Archive
+              </button>
+            </div>
+          )}
           {canManualMatch && (
             <div className="view-data-manual-match-bar">
               <button type="button" className="btn-primary" onClick={handleManualMatch}>
@@ -134,26 +165,14 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                     {result.unmatchedA.map(({ runId, row }, index) => (
                       <tr
                         key={`${runId}-${row._id}`}
-                        className={isLeftSelected(runId, row._id) ? "row-selected" : ""}
-                        onClick={() =>
-                          setSelectedLeft((prev) =>
-                            prev?.runId === runId && prev?.rowId === row._id
-                              ? null
-                              : { runId, rowId: row._id }
-                          )
-                        }
+                        className={isSelected(runId, "sourceA", row._id) ? "row-selected" : ""}
+                        onClick={() => toggleSelect(runId, "sourceA", row._id)}
                       >
                         <td>
                           <input
                             type="checkbox"
-                            checked={isLeftSelected(runId, row._id)}
-                            onChange={() =>
-                              setSelectedLeft((prev) =>
-                                prev?.runId === runId && prev?.rowId === row._id
-                                  ? null
-                                  : { runId, rowId: row._id }
-                              )
-                            }
+                            checked={isSelected(runId, "sourceA", row._id)}
+                            onChange={() => toggleSelect(runId, "sourceA", row._id)}
                             onClick={(e) => e.stopPropagation()}
                           />
                         </td>
@@ -192,26 +211,14 @@ export function DataTabView({ jobSpecId, jobSpec, runIds }: DataTabViewProps) {
                     {result.unmatchedB.map(({ runId, row }, index) => (
                       <tr
                         key={`${runId}-${row._id}`}
-                        className={isRightSelected(runId, row._id) ? "row-selected" : ""}
-                        onClick={() =>
-                          setSelectedRight((prev) =>
-                            prev?.runId === runId && prev?.rowId === row._id
-                              ? null
-                              : { runId, rowId: row._id }
-                          )
-                        }
+                        className={isSelected(runId, "sourceB", row._id) ? "row-selected" : ""}
+                        onClick={() => toggleSelect(runId, "sourceB", row._id)}
                       >
                         <td>
                           <input
                             type="checkbox"
-                            checked={isRightSelected(runId, row._id)}
-                            onChange={() =>
-                              setSelectedRight((prev) =>
-                                prev?.runId === runId && prev?.rowId === row._id
-                                  ? null
-                                  : { runId, rowId: row._id }
-                              )
-                            }
+                            checked={isSelected(runId, "sourceB", row._id)}
+                            onChange={() => toggleSelect(runId, "sourceB", row._id)}
                             onClick={(e) => e.stopPropagation()}
                           />
                         </td>

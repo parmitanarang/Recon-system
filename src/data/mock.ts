@@ -40,6 +40,8 @@ export type JobRun = {
   jobSpecId: string;
   runAt: string;
   status: JobRunStatus;
+  sourceAFileName?: string;
+  sourceBFileName?: string;
 };
 
 /** A single data row from a source; keys are column names, _id is internal id */
@@ -53,6 +55,8 @@ export type MatchPair = {
 export type RunResult = {
   unmatchedA: DataRow[];
   unmatchedB: DataRow[];
+  archivedA: DataRow[];
+  archivedB: DataRow[];
   autoMatched: MatchPair[];
   manualMatched: MatchPair[];
 };
@@ -66,8 +70,18 @@ export type UnmatchedRowWithRun = {
 export type AggregatedResult = {
   unmatchedA: UnmatchedRowWithRun[];
   unmatchedB: UnmatchedRowWithRun[];
+  archivedA: UnmatchedRowWithRun[];
+  archivedB: UnmatchedRowWithRun[];
   autoMatched: MatchPair[];
   manualMatched: MatchPair[];
+};
+
+export type ArchivedRecord = {
+  runId: string;
+  runAt?: string;
+  source: DataSourceId;
+  sourceFileName?: string;
+  row: DataRow;
 };
 
 /** Build mock run result for a job spec (for Phase 3 UI). */
@@ -99,6 +113,8 @@ export function buildMockRunResult(jobSpec: JobSpec): RunResult {
   return {
     unmatchedA,
     unmatchedB,
+    archivedA: [],
+    archivedB: [],
     autoMatched,
     manualMatched: []
   };

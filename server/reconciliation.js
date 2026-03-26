@@ -17,7 +17,7 @@ function parseCsvLine(line) {
 export function parseCsvToRows(csvText) {
   const lines = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]);
+  const headers = parseCsvLine(lines[0]).map((h) => normalizeHeader(h));
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const values = parseCsvLine(lines[i]);
@@ -26,6 +26,99 @@ export function parseCsvToRows(csvText) {
     rows.push(row);
   }
   return rows;
+}
+
+function normalizeHeader(header) {
+  return String(header ?? "").replace(/^\uFEFF/, "").trim();
+}
+
+function normalizeColumnKey(name) {
+  return normalizeHeader(name).toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function getRowValue(row, column) {
+  if (column in row) return String(row[column] ?? "");
+  const normalizedTarget = normalizeColumnKey(column);
+  const matchedKey = Object.keys(row).find((k) => normalizeColumnKey(k) === normalizedTarget);
+  if (!matchedKey) return "";
+  return String(row[matchedKey] ?? "");
+}
+
+function normalizeText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function parseNumberLike(value) {
+  const numericLike = normalizeText(value).replace(/[$,]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(numericLike)) return null;
+  return Number(numericLike);
+}
+
+function parseDateLike(value) {
+  const normalizedText = normalizeText(value);
+  const parts = normalizedText.match(/\d+/g);
+  if (!parts || parts.length < 3) return null;
+
+  const hasLikelyDateShape =
+    /(\d{4}[-/]\d{1,2}[-/]\d{1,2})|(\d{1,2}[-/]\d{1,2}[-/]\d{4})/.test(normalizedText);
+  if (!hasLikelyDateShape) return null;
+
+  const structuralSet = new Set();
+
+  const hour = parts[3] ?? "0";
+  const minute = parts[4] ?? "0";
+  const second = parts[5] ?? "0";
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const buildStructural = (year, month, day) =>
+    `${String(year).padStart(4, "0")}${pad2(month)}${pad2(day)}${pad2(hour)}${pad2(minute)}${pad2(second)}`;
+  const isValidMonthDay = (month, day) => {
+    const m = Number(month);
+    const d = Number(day);
+    return m >= 1 && m <= 12 && d >= 1 && d <= 31;
+  };
+
+  if (parts[0].length === 4) {
+    if (isValidMonthDay(parts[1], parts[2])) {
+      structuralSet.add(buildStructural(parts[0], parts[1], parts[2]));
+    }
+  } else if (parts[2].length === 4) {
+    if (isValidMonthDay(parts[1], parts[0])) {
+      structuralSet.add(buildStructural(parts[2], parts[1], parts[0]));
+    }
+    if (isValidMonthDay(parts[0], parts[1])) {
+      structuralSet.add(buildStructural(parts[2], parts[0], parts[1]));
+    }
+  }
+
+  if (structuralSet.size === 0) return null;
+
+  const dateParseInput = normalizedText.replace(" ", "T");
+  const parsed = Date.parse(dateParseInput);
+  const hasTimezone = /z$|[+\-]\d{2}:?\d{2}$/.test(dateParseInput);
+  if (!Number.isNaN(parsed) && hasTimezone) {
+    return { structurals: [...structuralSet], epoch: parsed };
+  }
+  return { structurals: [...structuralSet] };
+}
+
+function valuesMatch(left, right) {
+  const leftDate = parseDateLike(left);
+  const rightDate = parseDateLike(right);
+  if (leftDate && rightDate) {
+    if (leftDate.structurals.some((s) => rightDate.structurals.includes(s))) return true;
+    if (leftDate.epoch != null && rightDate.epoch != null) {
+      return leftDate.epoch === rightDate.epoch;
+    }
+  }
+
+  const leftNum = parseNumberLike(left);
+  const rightNum = parseNumberLike(right);
+  if (leftNum != null && rightNum != null) {
+    return leftNum === rightNum;
+  }
+
+  return normalizeText(left) === normalizeText(right);
 }
 
 export function runReconciliation(jobSpec, rowsA, rowsB) {
@@ -40,9 +133,13 @@ export function runReconciliation(jobSpec, rowsA, rowsB) {
     for (const a of listA) {
       const matchIndex = remainingB.findIndex((b) =>
         rules.every((rule) => {
-          const leftVal = rule.left.source === "sourceA" ? a[rule.left.column] : b[rule.left.column];
-          const rightVal = rule.right.source === "sourceA" ? a[rule.right.column] : b[rule.right.column];
-          return String(leftVal ?? "").trim() === String(rightVal ?? "").trim();
+          const leftVal = rule.left.source === "sourceA"
+            ? getRowValue(a, rule.left.column)
+            : getRowValue(b, rule.left.column);
+          const rightVal = rule.right.source === "sourceA"
+            ? getRowValue(a, rule.right.column)
+            : getRowValue(b, rule.right.column);
+          return valuesMatch(leftVal, rightVal);
         })
       );
       if (matchIndex >= 0) {
@@ -55,7 +152,7 @@ export function runReconciliation(jobSpec, rowsA, rowsB) {
     listA = remainingA;
     listB = remainingB;
   }
-  return { unmatchedA: listA, unmatchedB: listB, autoMatched, manualMatched: [] };
+  return { unmatchedA: listA, unmatchedB: listB, archivedA: [], archivedB: [], autoMatched, manualMatched: [] };
 }
 
 export function buildMockRunResult(jobSpec) {
@@ -71,5 +168,5 @@ export function buildMockRunResult(jobSpec) {
   const autoMatched = colsA.length && colsB.length
     ? [1, 2].map((n) => ({ left: makeRow(colsA, "autoLeft", n), right: makeRow(colsB, "autoRight", n) }))
     : [];
-  return { unmatchedA, unmatchedB, autoMatched, manualMatched: [] };
+  return { unmatchedA, unmatchedB, archivedA: [], archivedB: [], autoMatched, manualMatched: [] };
 }

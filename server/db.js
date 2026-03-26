@@ -27,15 +27,23 @@ export async function initDb() {
         id TEXT PRIMARY KEY,
         job_spec_id TEXT NOT NULL REFERENCES job_specs(id) ON DELETE CASCADE,
         run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        status TEXT NOT NULL DEFAULT 'completed'
+        status TEXT NOT NULL DEFAULT 'completed',
+        source_a_file TEXT,
+        source_b_file TEXT
       );
+      ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS source_a_file TEXT;
+      ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS source_b_file TEXT;
       CREATE TABLE IF NOT EXISTS run_results (
         run_id TEXT PRIMARY KEY REFERENCES job_runs(id) ON DELETE CASCADE,
         unmatched_a JSONB NOT NULL DEFAULT '[]',
         unmatched_b JSONB NOT NULL DEFAULT '[]',
+        archived_a JSONB NOT NULL DEFAULT '[]',
+        archived_b JSONB NOT NULL DEFAULT '[]',
         auto_matched JSONB NOT NULL DEFAULT '[]',
         manual_matched JSONB NOT NULL DEFAULT '[]'
       );
+      ALTER TABLE run_results ADD COLUMN IF NOT EXISTS archived_a JSONB NOT NULL DEFAULT '[]';
+      ALTER TABLE run_results ADD COLUMN IF NOT EXISTS archived_b JSONB NOT NULL DEFAULT '[]';
       CREATE TABLE IF NOT EXISTS job_spec_manual_matches (
         id TEXT PRIMARY KEY,
         job_spec_id TEXT NOT NULL REFERENCES job_specs(id) ON DELETE CASCADE,

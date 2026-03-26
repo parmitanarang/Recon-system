@@ -7,7 +7,9 @@ import type {
   RunResult,
   AggregatedResult,
   SampleSource,
-  MatchRule
+  MatchRule,
+  ArchivedRecord,
+  DataSourceId
 } from "../data/mock";
 import { DataContext } from "./DataContext";
 
@@ -106,15 +108,31 @@ export function ApiDataProvider({ children }: { children: ReactNode }) {
         const result = await api.runResult.get(runId);
         setRunResults((prev) => ({ ...prev, [runId]: result as RunResult }));
       } catch {
-        setRunResults((prev) => ({ ...prev, [runId]: { unmatchedA: [], unmatchedB: [], autoMatched: [], manualMatched: [] } }));
+        setRunResults((prev) => ({
+          ...prev,
+          [runId]: {
+            unmatchedA: [],
+            unmatchedB: [],
+            archivedA: [],
+            archivedB: [],
+            autoMatched: [],
+            manualMatched: []
+          }
+        }));
       }
     },
     [runResults]
   );
 
   const addManualMatch = useCallback(
-    async (runId: string, leftRowId: string, rightRowId: string) => {
-      await api.manualMatch.run(runId, leftRowId, rightRowId);
+    async (
+      runId: string,
+      firstSource: DataSourceId,
+      firstRowId: string,
+      secondSource: DataSourceId,
+      secondRowId: string
+    ) => {
+      await api.manualMatch.run(runId, firstSource, firstRowId, secondSource, secondRowId);
       const result = await api.runResult.get(runId);
       setRunResults((prev) => ({ ...prev, [runId]: result as RunResult }));
     },
@@ -125,15 +143,38 @@ export function ApiDataProvider({ children }: { children: ReactNode }) {
     return api.aggregated.get(jobSpecId) as Promise<AggregatedResult>;
   }, []);
 
+  const archiveUnmatchedRecord = useCallback(
+    async (runId: string, source: DataSourceId, rowId: string) => {
+      await api.archive.run(runId, source, rowId);
+      const result = await api.runResult.get(runId);
+      setRunResults((prev) => ({ ...prev, [runId]: result as RunResult }));
+    },
+    []
+  );
+
+  const getArchivedRecords = useCallback(async (jobSpecId: string): Promise<ArchivedRecord[]> => {
+    return api.archive.byJobSpec(jobSpecId) as Promise<ArchivedRecord[]>;
+  }, []);
+
   const addManualMatchForJobSpec = useCallback(
     async (
       jobSpecId: string,
-      leftRunId: string,
-      leftRowId: string,
-      rightRunId: string,
-      rightRowId: string
+      firstRunId: string,
+      firstSource: DataSourceId,
+      firstRowId: string,
+      secondRunId: string,
+      secondSource: DataSourceId,
+      secondRowId: string
     ) => {
-      await api.manualMatch.jobSpec(jobSpecId, leftRunId, leftRowId, rightRunId, rightRowId);
+      await api.manualMatch.jobSpec(
+        jobSpecId,
+        firstRunId,
+        firstSource,
+        firstRowId,
+        secondRunId,
+        secondSource,
+        secondRowId
+      );
       await load();
       setRunResults((prev) => ({ ...prev }));
     },
@@ -141,8 +182,11 @@ export function ApiDataProvider({ children }: { children: ReactNode }) {
   );
 
   const addJobRun = useCallback(
-    async (jobSpecId: string): Promise<string> => {
-      const run = await api.jobRuns.create(jobSpecId);
+    async (
+      jobSpecId: string,
+      files?: { sourceAFileName?: string; sourceBFileName?: string }
+    ): Promise<string> => {
+      const run = await api.jobRuns.create(jobSpecId, files);
       await load();
       return run.id;
     },
@@ -184,7 +228,9 @@ export function ApiDataProvider({ children }: { children: ReactNode }) {
     ensureRunResult,
     runResults,
     addManualMatch,
+    archiveUnmatchedRecord,
     getAggregatedResult,
+    getArchivedRecords,
     addManualMatchForJobSpec,
     addJobRun,
     setRunResult,

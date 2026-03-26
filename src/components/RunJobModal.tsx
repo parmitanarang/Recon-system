@@ -41,7 +41,9 @@ export function RunJobModal({ jobSpec, onClose }: RunJobModalProps) {
         return;
       }
       const result = runReconciliation(jobSpec, rowsA, rowsB);
-      const runId = await Promise.resolve(addJobRun(jobSpec.id));
+      const runId = await Promise.resolve(
+        addJobRun(jobSpec.id, { sourceAFileName: fileA.name, sourceBFileName: fileB.name })
+      );
       await Promise.resolve(setRunResult(runId, result));
       onClose();
     } catch (e) {

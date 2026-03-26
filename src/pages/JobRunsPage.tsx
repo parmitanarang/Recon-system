@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useData } from "../context/DataContext";
 import { ViewDataModal } from "../components/ViewDataModal";
 import { DataTabView } from "../components/DataTabView";
 import { RunJobModal } from "../components/RunJobModal";
-import type { DataSourceId } from "../data/mock";
+import type { ArchivedRecord, DataSourceId } from "../data/mock";
 
 const formatDateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {
@@ -26,7 +26,7 @@ function StatusPill({ status }: { status: "completed" | "in-progress" | "failed"
   return <span className={`status-pill status-pill-${status}`}>{labelMap[status]}</span>;
 }
 
-type TabId = "runs" | "spec" | "data";
+type TabId = "runs" | "spec" | "data" | "archived";
 
 function sourceLabel(source: DataSourceId): string {
   return source === "sourceA" ? "Data Source 1" : "Data Source 2";
@@ -39,7 +39,7 @@ export function JobRunsPage() {
   const [viewDataRunId, setViewDataRunId] = useState<string | null>(null);
   const [showRunJobModal, setShowRunJobModal] = useState(false);
 
-  const { projects, jobSpecs, jobRuns } = useData();
+  const { projects, jobSpecs, jobRuns, getArchivedRecords } = useData();
 
   const project = projects.find((p) => p.id === projectId);
   const jobSpec = jobSpecs.find((s) => s.id === jobSpecId);
@@ -59,6 +59,13 @@ export function JobRunsPage() {
   const sourceA = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceA");
   const sourceB = jobSpec.sampleSources?.find((s) => s.sourceId === "sourceB");
   const rules = jobSpec.rules ?? [];
+  const [archivedRecords, setArchivedRecords] = useState<ArchivedRecord[]>([]);
+
+  useEffect(() => {
+    Promise.resolve(getArchivedRecords(jobSpec.id))
+      .then((records) => setArchivedRecords(records as ArchivedRecord[]))
+      .catch(() => setArchivedRecords([]));
+  }, [jobSpec.id, getArchivedRecords, runRunsKey(runsForSpec)]);
 
   return (
     <section>
@@ -116,6 +123,13 @@ export function JobRunsPage() {
         >
           Data
         </button>
+        <button
+          type="button"
+          className={`tab ${activeTab === "archived" ? "tab-active" : ""}`}
+          onClick={() => setActiveTab("archived")}
+        >
+          Archived
+        </button>
       </div>
 
       {activeTab === "runs" && (
@@ -124,7 +138,6 @@ export function JobRunsPage() {
             <div className="pill-group">
               <button className="pill">Date Range</button>
               <button className="pill">Status</button>
-              <button className="pill pill-outline">+ Filter</button>
             </div>
           </div>
 
@@ -134,7 +147,7 @@ export function JobRunsPage() {
                 <tr>
                   <th>Job ID</th>
                   <th>Job Run Date</th>
-                  <th>Issuance Status</th>
+                  <th>Status</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -250,6 +263,36 @@ export function JobRunsPage() {
         />
       )}
 
+      {activeTab === "archived" && (
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Run Date</th>
+                <th>Source</th>
+                <th>Record Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {archivedRecords.map((item) => (
+                <tr key={`${item.runId}-${item.source}-${item.row._id}`}>
+                  <td className="mono">{item.runId}</td>
+                  <td>{item.runAt ? formatDateTime(item.runAt) : "—"}</td>
+                  <td>{item.sourceFileName || sourceLabel(item.source)}</td>
+                  <td className="mono">{JSON.stringify(item.row)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {archivedRecords.length === 0 && (
+            <p className="view-data-empty" style={{ padding: 12 }}>
+              No archived records yet.
+            </p>
+          )}
+        </div>
+      )}
+
       {showRunJobModal && jobSpec && (
         <RunJobModal jobSpec={jobSpec} onClose={() => setShowRunJobModal(false)} />
       )}
@@ -264,5 +307,9 @@ export function JobRunsPage() {
       )}
     </section>
   );
+}
+
+function runRunsKey(runs: { id: string; runAt: string }[]): string {
+  return runs.map((r) => `${r.id}:${r.runAt}`).join("|");
 }
 

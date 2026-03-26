@@ -53,44 +53,131 @@ export const api = {
   },
   jobRuns: {
     list: () =>
-      request<{ id: string; jobSpecId: string; runAt: string; status: string }[]>("/api/job-runs"),
+      request<{
+        id: string;
+        jobSpecId: string;
+        runAt: string;
+        status: string;
+        sourceAFileName?: string;
+        sourceBFileName?: string;
+      }[]>("/api/job-runs"),
     listBySpec: (jobSpecId: string) =>
-      request<{ id: string; jobSpecId: string; runAt: string; status: string }[]>(
+      request<{
+        id: string;
+        jobSpecId: string;
+        runAt: string;
+        status: string;
+        sourceAFileName?: string;
+        sourceBFileName?: string;
+      }[]>(
         `/api/job-specs/${jobSpecId}/job-runs`
       ),
-    create: (jobSpecId: string, body?: { runAt?: string; status?: string; result?: unknown }) =>
-      request<{ id: string; jobSpecId: string; runAt: string; status: string }>(
+    create: (
+      jobSpecId: string,
+      body?: {
+        runAt?: string;
+        status?: string;
+        sourceAFileName?: string;
+        sourceBFileName?: string;
+        result?: unknown;
+      }
+    ) =>
+      request<{
+        id: string;
+        jobSpecId: string;
+        runAt: string;
+        status: string;
+        sourceAFileName?: string;
+        sourceBFileName?: string;
+      }>(
         `/api/job-specs/${jobSpecId}/job-runs`,
         { method: "POST", body: JSON.stringify(body ?? {}) }
       ),
   },
   runResult: {
     get: (runId: string) =>
-      request<{ unmatchedA: unknown[]; unmatchedB: unknown[]; autoMatched: unknown[]; manualMatched: unknown[] }>(
+      request<{
+        unmatchedA: unknown[];
+        unmatchedB: unknown[];
+        archivedA: unknown[];
+        archivedB: unknown[];
+        autoMatched: unknown[];
+        manualMatched: unknown[];
+      }>(
         `/api/job-runs/${runId}/result`
       ),
-    set: (runId: string, result: { unmatchedA: unknown[]; unmatchedB: unknown[]; autoMatched: unknown[]; manualMatched: unknown[] }) =>
+    set: (
+      runId: string,
+      result: {
+        unmatchedA: unknown[];
+        unmatchedB: unknown[];
+        archivedA: unknown[];
+        archivedB: unknown[];
+        autoMatched: unknown[];
+        manualMatched: unknown[];
+      }
+    ) =>
       request<void>(`/api/job-runs/${runId}/result`, { method: "PUT", body: JSON.stringify(result) }),
     ensure: (runId: string, jobSpec: unknown) =>
       request<void>(`/api/job-runs/${runId}/ensure-result`, { method: "POST", body: JSON.stringify(jobSpec) }),
   },
   manualMatch: {
-    run: (runId: string, leftRowId: string, rightRowId: string) =>
+    run: (
+      runId: string,
+      firstSource: "sourceA" | "sourceB",
+      firstRowId: string,
+      secondSource: "sourceA" | "sourceB",
+      secondRowId: string
+    ) =>
       request<void>(`/api/job-runs/${runId}/manual-match`, {
         method: "POST",
-        body: JSON.stringify({ leftRowId, rightRowId }),
+        body: JSON.stringify({ firstSource, firstRowId, secondSource, secondRowId }),
       }),
-    jobSpec: (jobSpecId: string, leftRunId: string, leftRowId: string, rightRunId: string, rightRowId: string) =>
+    jobSpec: (
+      jobSpecId: string,
+      firstRunId: string,
+      firstSource: "sourceA" | "sourceB",
+      firstRowId: string,
+      secondRunId: string,
+      secondSource: "sourceA" | "sourceB",
+      secondRowId: string
+    ) =>
       request<void>(`/api/job-specs/${jobSpecId}/manual-match`, {
         method: "POST",
-        body: JSON.stringify({ leftRunId, leftRowId, rightRunId, rightRowId }),
+        body: JSON.stringify({
+          firstRunId,
+          firstSource,
+          firstRowId,
+          secondRunId,
+          secondSource,
+          secondRowId
+        }),
       }),
+  },
+  archive: {
+    run: (runId: string, source: "sourceA" | "sourceB", rowId: string) =>
+      request<void>(`/api/job-runs/${runId}/archive-unmatched`, {
+        method: "POST",
+        body: JSON.stringify({ source, rowId })
+      }),
+    byJobSpec: (jobSpecId: string) =>
+      request<{
+        runId: string;
+        runAt: string;
+        source: "sourceA" | "sourceB";
+        sourceFileName?: string;
+        row: unknown;
+      }[]>(
+        `/api/job-specs/${jobSpecId}/archived-records`
+      )
   },
   aggregated: {
     get: (jobSpecId: string) =>
       request<{
         unmatchedA: { runId: string; row: unknown }[];
         unmatchedB: { runId: string; row: unknown }[];
+        archivedA: { runId: string; row: unknown }[];
+        archivedB: { runId: string; row: unknown }[];
         autoMatched: unknown[];
         manualMatched: unknown[];
       }>(`/api/job-specs/${jobSpecId}/aggregated-result`),

@@ -423,14 +423,16 @@ a:focus-visible {
 
 .table-container {
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: auto;
   border: 1px solid var(--border-subtle);
   background-color: var(--bg-surface);
   box-shadow: var(--shadow-card);
 }
 
 .data-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -444,6 +446,7 @@ a:focus-visible {
   padding: 10px 14px;
   text-align: left;
   border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
 }
 
 .data-table th {

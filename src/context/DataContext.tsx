@@ -11,7 +11,9 @@ import {
   type SampleSource,
   type RunResult,
   type MatchPair,
-  type AggregatedResult
+  type AggregatedResult,
+  type DataSourceId,
+  type ArchivedRecord
 } from "../data/mock";
 
 export interface DataContextValue {
@@ -32,16 +34,29 @@ export interface DataContextValue {
   deleteJobSpec(id: string): void | Promise<void>;
   ensureRunResult(runId: string, jobSpec: JobSpec): void | Promise<void>;
   runResults: Record<string, RunResult>;
-  addManualMatch(runId: string, leftRowId: string, rightRowId: string): void | Promise<void>;
+  addManualMatch(
+    runId: string,
+    firstSource: DataSourceId,
+    firstRowId: string,
+    secondSource: DataSourceId,
+    secondRowId: string
+  ): void | Promise<void>;
+  archiveUnmatchedRecord(runId: string, source: DataSourceId, rowId: string): void | Promise<void>;
   getAggregatedResult(jobSpecId: string): AggregatedResult | Promise<AggregatedResult>;
+  getArchivedRecords(jobSpecId: string): ArchivedRecord[] | Promise<ArchivedRecord[]>;
   addManualMatchForJobSpec(
     jobSpecId: string,
-    leftRunId: string,
-    leftRowId: string,
-    rightRunId: string,
-    rightRowId: string
+    firstRunId: string,
+    firstSource: DataSourceId,
+    firstRowId: string,
+    secondRunId: string,
+    secondSource: DataSourceId,
+    secondRowId: string
   ): void | Promise<void>;
-  addJobRun(jobSpecId: string): string | Promise<string>;
+  addJobRun(
+    jobSpecId: string,
+    files?: { sourceAFileName?: string; sourceBFileName?: string }
+  ): string | Promise<string>;
   setRunResult(runId: string, result: RunResult): void | Promise<void>;
   runJobWithFiles?(jobSpecId: string, fileA: File, fileB: File): Promise<string | null>;
 }
@@ -162,18 +177,76 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const addManualMatch: DataContextValue["addManualMatch"] = (runId, leftRowId, rightRowId) => {
+  const addManualMatch: DataContextValue["addManualMatch"] = (
+    runId,
+    firstSource,
+    firstRowId,
+    secondSource,
+    secondRowId
+  ) => {
     setRunResults((prev) => {
       const result = prev[runId];
       if (!result) return prev;
-      const left = result.unmatchedA.find((r) => r._id === leftRowId);
-      const right = result.unmatchedB.find((r) => r._id === rightRowId);
-      if (!left || !right) return prev;
+      const getRow = (source: DataSourceId, rowId: string) =>
+        source === "sourceA"
+          ? result.unmatchedA.find((r) => r._id === rowId)
+          : result.unmatchedB.find((r) => r._id === rowId);
+      const first = getRow(firstSource, firstRowId);
+      const second = getRow(secondSource, secondRowId);
+      if (!first || !second) return prev;
       return {
-        ...result,
-        unmatchedA: result.unmatchedA.filter((r) => r._id !== leftRowId),
-        unmatchedB: result.unmatchedB.filter((r) => r._id !== rightRowId),
-        manualMatched: [...result.manualMatched, { left, right }]
+        ...prev,
+        [runId]: {
+          ...result,
+          unmatchedA: result.unmatchedA.filter(
+            (r) =>
+              !(
+                (firstSource === "sourceA" && r._id === firstRowId) ||
+                (secondSource === "sourceA" && r._id === secondRowId)
+              )
+          ),
+          unmatchedB: result.unmatchedB.filter(
+            (r) =>
+              !(
+                (firstSource === "sourceB" && r._id === firstRowId) ||
+                (secondSource === "sourceB" && r._id === secondRowId)
+              )
+          ),
+          manualMatched: [...result.manualMatched, { left: first, right: second }]
+        }
+      };
+    });
+  };
+
+  const archiveUnmatchedRecord: DataContextValue["archiveUnmatchedRecord"] = (
+    runId,
+    source,
+    rowId
+  ) => {
+    setRunResults((prev) => {
+      const result = prev[runId];
+      if (!result) return prev;
+      if (source === "sourceA") {
+        const row = result.unmatchedA.find((r) => r._id === rowId);
+        if (!row) return prev;
+        return {
+          ...prev,
+          [runId]: {
+            ...result,
+            unmatchedA: result.unmatchedA.filter((r) => r._id !== rowId),
+            archivedA: [...(result.archivedA ?? []), row]
+          }
+        };
+      }
+      const row = result.unmatchedB.find((r) => r._id === rowId);
+      if (!row) return prev;
+      return {
+        ...prev,
+        [runId]: {
+          ...result,
+          unmatchedB: result.unmatchedB.filter((r) => r._id !== rowId),
+          archivedB: [...(result.archivedB ?? []), row]
+        }
       };
     });
   };
@@ -190,6 +263,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (!res) return [];
       return res.unmatchedB.map((row) => ({ runId: r.id, row }));
     });
+    const archivedA = runs.flatMap((r) => {
+      const res = runResults[r.id];
+      if (!res) return [];
+      return (res.archivedA ?? []).map((row) => ({ runId: r.id, row }));
+    });
+    const archivedB = runs.flatMap((r) => {
+      const res = runResults[r.id];
+      if (!res) return [];
+      return (res.archivedB ?? []).map((row) => ({ runId: r.id, row }));
+    });
     const autoMatched = runs.flatMap((r) => runResults[r.id]?.autoMatched ?? []);
     const manualFromRuns = runs.flatMap((r) => runResults[r.id]?.manualMatched ?? []);
     const manualFromSpec = jobSpecManualMatches[jobSpecId] ?? [];
@@ -197,18 +280,47 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return {
       unmatchedA,
       unmatchedB,
+      archivedA,
+      archivedB,
       autoMatched,
       manualMatched
     };
   };
 
-  const addJobRun: DataContextValue["addJobRun"] = (jobSpecId) => {
+  const getArchivedRecords: DataContextValue["getArchivedRecords"] = (jobSpecId) => {
+    const runs = jobRuns
+      .filter((r) => r.jobSpecId === jobSpecId)
+      .sort((a, b) => new Date(b.runAt).getTime() - new Date(a.runAt).getTime());
+    return runs.flatMap((run) => {
+      const res = runResults[run.id];
+      if (!res) return [];
+      const fromA: ArchivedRecord[] = (res.archivedA ?? []).map((row) => ({
+        runId: run.id,
+        runAt: run.runAt,
+        source: "sourceA",
+        sourceFileName: run.sourceAFileName,
+        row
+      }));
+      const fromB: ArchivedRecord[] = (res.archivedB ?? []).map((row) => ({
+        runId: run.id,
+        runAt: run.runAt,
+        source: "sourceB",
+        sourceFileName: run.sourceBFileName,
+        row
+      }));
+      return [...fromA, ...fromB];
+    });
+  };
+
+  const addJobRun: DataContextValue["addJobRun"] = (jobSpecId, files) => {
     const runId = crypto.randomUUID();
     const newRun: JobRun = {
       id: runId,
       jobSpecId,
       runAt: new Date().toISOString(),
-      status: "completed"
+      status: "completed",
+      sourceAFileName: files?.sourceAFileName,
+      sourceBFileName: files?.sourceBFileName
     };
     setJobRuns((prev) => [newRun, ...prev]);
     return runId;
@@ -220,38 +332,43 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const addManualMatchForJobSpec: DataContextValue["addManualMatchForJobSpec"] = (
     jobSpecId,
-    leftRunId,
-    leftRowId,
-    rightRunId,
-    rightRowId
+    firstRunId,
+    firstSource,
+    firstRowId,
+    secondRunId,
+    secondSource,
+    secondRowId
   ) => {
-    const leftResult = runResults[leftRunId];
-    const rightResult = runResults[rightRunId];
-    if (!leftResult || !rightResult) return;
-    const left = leftResult.unmatchedA.find((r) => r._id === leftRowId);
-    const right = rightResult.unmatchedB.find((r) => r._id === rightRowId);
-    if (!left || !right) return;
+    const firstResult = runResults[firstRunId];
+    const secondResult = runResults[secondRunId];
+    if (!firstResult || !secondResult) return;
+    const first =
+      firstSource === "sourceA"
+        ? firstResult.unmatchedA.find((r) => r._id === firstRowId)
+        : firstResult.unmatchedB.find((r) => r._id === firstRowId);
+    const second =
+      secondSource === "sourceA"
+        ? secondResult.unmatchedA.find((r) => r._id === secondRowId)
+        : secondResult.unmatchedB.find((r) => r._id === secondRowId);
+    if (!first || !second) return;
     setJobSpecManualMatches((prev) => ({
       ...prev,
-      [jobSpecId]: [...(prev[jobSpecId] ?? []), { left, right }]
+      [jobSpecId]: [...(prev[jobSpecId] ?? []), { left: first, right: second }]
     }));
-    setRunResults((prev) => ({
-      ...prev,
-      [leftRunId]: {
-        ...prev[leftRunId],
-        unmatchedA: prev[leftRunId].unmatchedA.filter((r) => r._id !== leftRowId),
-        unmatchedB: prev[leftRunId].unmatchedB,
-        autoMatched: prev[leftRunId].autoMatched,
-        manualMatched: prev[leftRunId].manualMatched
-      },
-      [rightRunId]: {
-        ...prev[rightRunId],
-        unmatchedA: prev[rightRunId].unmatchedA,
-        unmatchedB: prev[rightRunId].unmatchedB.filter((r) => r._id !== rightRowId),
-        autoMatched: prev[rightRunId].autoMatched,
-        manualMatched: prev[rightRunId].manualMatched
-      }
-    }));
+    setRunResults((prev) => {
+      const next = { ...prev };
+      const removeRow = (runId: string, source: DataSourceId, rowId: string) => {
+        const current = next[runId];
+        if (!current) return;
+        next[runId] =
+          source === "sourceA"
+            ? { ...current, unmatchedA: current.unmatchedA.filter((r) => r._id !== rowId) }
+            : { ...current, unmatchedB: current.unmatchedB.filter((r) => r._id !== rowId) };
+      };
+      removeRow(firstRunId, firstSource, firstRowId);
+      removeRow(secondRunId, secondSource, secondRowId);
+      return next;
+    });
   };
 
   return (
@@ -269,7 +386,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         ensureRunResult,
         runResults,
         addManualMatch,
+        archiveUnmatchedRecord,
         getAggregatedResult,
+        getArchivedRecords,
         addManualMatchForJobSpec,
         addJobRun,
         setRunResult
